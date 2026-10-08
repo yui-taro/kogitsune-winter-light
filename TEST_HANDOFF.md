@@ -21,7 +21,7 @@
 - [`game/Makefile`](game/Makefile): `make -C game test` に新テストを追加。`build/test_bridge` は別ターゲット。
 - [`game/CMakeLists.txt`](game/CMakeLists.txt): `design_contract` を CTest に追加。
 
-リポジトリのルートに `.git` はなく、ここではコミット・差分表示ができない。変更前後の厳密な差分が必要なら、元のリポジトリと照合する。
+2026-10-08 から git 管理（GitHub: yui-taro/kogitsune-winter-light、private）。
 
 ## 実行済みの検証
 
@@ -40,7 +40,7 @@ Node の結合テストはループバックポート使用のため、ローカ
 ## 2回目の作業（2026-10-07）で行ったこと
 
 - [`tests/README.md`](tests/README.md): V0〜V6、要件 ID、J-01〜J-11 とテストの対応表を作成。自動／一部自動／未実装／手動を区別し、テストで見つかった設計との差を記載。
-- [`.github/workflows/tests.yml`](.github/workflows/tests.yml): push と PR で C++ テストと Node 中継テストを Ubuntu・macOS で実行する CI を追加。[`windows-build.yml`](.github/workflows/windows-build.yml) にも PR トリガーを追加。**GitHub 上での実行結果は未確認**（Ubuntu ではローカル未検証）。
+- [`.github/workflows/tests.yml`](.github/workflows/tests.yml): push と PR で C++ テストと Node 中継テストを Ubuntu・macOS で実行する CI を追加。[`windows-build.yml`](.github/workflows/windows-build.yml) にも PR トリガーを追加。2026-10-08 に [yui-taro/kogitsune-winter-light](https://github.com/yui-taro/kogitsune-winter-light)（private）へ push し、`Tests`（Ubuntu・macOS）と `Windows build`（CTest 含む）が成功した。
 - [`tests/test_contract.cpp`](tests/test_contract.cpp): J-06（結末で判断要求・捕獲が起きない）を追加。J-11 として CP-C 保存後の盗難の観測が復元で消えることを追加検査。
 - [`server/relay.mjs`](server/relay.mjs): 上流 URL を `TYPESAFE_API_URL` で差し替え可能にした（既定は公式 URL のまま）。Jev が形式不正 JSON を返した時に 400 と誤応答していた不具合を 503 に修正。
 - [`server/test.mjs`](server/test.mjs): 模擬 Jev サーバーで、Jev へ届く本文に観測外情報・キー・識別子が含まれないこと（J-07）、429/529/401/422・形式不正・候補外が 503 になり高速再試行しないこと（V4/J-08）を追加。
@@ -50,13 +50,12 @@ Node の結合テストはループバックポート使用のため、ローカ
 
 ## 次に行う作業
 
-1. GitHub へ push して `Tests` と `Windows build` の CI 結果を確認する（このフォルダに `.git` がないため未実施）。
-2. `server/relay.mjs` の `model: 'jev-latest'` を固定版へ変え、応答の `model` と `usage.input_tokens` を記録する（実API試験の前提）。
-3. 429/529 のバックオフ方針を決めて実装する。現在は再試行せず 503。
-4. 「巣で弟妹を見た」観測をゲームに入れるか決める（J-06 の前提）。
-5. 実APIでの J-01〜J-05・J-08・J-09 の固定盤面評価（APIキー、固定モデル版、費用記録が必要）。
-6. A-04 の予兆、F-05 の捕獲理由、F-06 の対処の残り方を実画面または追加の状態テストで検証する。
-7. V5・V6 の受け入れ記録。テストが通っても「未測定」を合格扱いしない。
+1. `server/relay.mjs` の `model: 'jev-latest'` を固定版へ変え、応答の `model` と `usage.input_tokens` を記録する（実API試験の前提）。
+2. 429/529 のバックオフ方針を決めて実装する。現在は再試行せず 503。
+3. 「巣で弟妹を見た」観測をゲームに入れるか決める（J-06 の前提）。
+4. 実APIでの J-01〜J-05・J-08・J-09 の固定盤面評価（APIキー、固定モデル版、費用記録が必要）。
+5. A-04 の予兆、F-05 の捕獲理由、F-06 の対処の残り方を実画面または追加の状態テストで検証する。
+6. V5・V6 の受け入れ記録。テストが通っても「未測定」を合格扱いしない。
 
 ## 注意点
 
