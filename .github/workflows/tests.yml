@@ -1,0 +1,39 @@
+name: Tests
+
+# C++ の状態・契約テストと、Node 中継と C++ クライアントの結合テストを実行する。
+# Windows の CMake/CTest は windows-build.yml が担当する。
+on:
+  push:
+    paths:
+      - 'game/**'
+      - 'tests/**'
+      - 'server/**'
+      - '.github/workflows/tests.yml'
+  pull_request:
+    paths:
+      - 'game/**'
+      - 'tests/**'
+      - 'server/**'
+      - '.github/workflows/tests.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install libcurl
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
+      - name: C++ state and contract tests
+        run: make -C game test build/test_bridge
+      - name: Relay and bridge integration tests
+        working-directory: server
+        run: node --test test.mjs
