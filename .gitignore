@@ -6,3 +6,4 @@ game/build-windows/
 game/out-win/
 *.log
 brag-output/
+game/build-web/

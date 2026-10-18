@@ -1,7 +1,9 @@
 #include "JevBridge.hpp"
 
 #include "nlohmann/json.hpp"
+#ifndef __EMSCRIPTEN__
 #include <curl/curl.h>
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -68,9 +70,19 @@ Json RequestJson(const DecisionRequest& request) {
 } // namespace
 
 JevBridge::JevBridge(std::string relayUrl) : url_(std::move(relayUrl)) {
+#ifdef __EMSCRIPTEN__
+    // The browser build has no relay: the guardian always uses the local policy.
+    url_.clear();
+#else
     if (!url_.empty()) { curl_global_init(CURL_GLOBAL_DEFAULT); status_ = Status::Waiting; }
+#endif
 }
 
+#ifdef __EMSCRIPTEN__
+std::optional<JevBridge::RelayReply> JevBridge::Request(const std::string&, const DecisionRequest&) {
+    return std::nullopt;
+}
+#else
 std::optional<JevBridge::RelayReply> JevBridge::Request(const std::string& url, const DecisionRequest& request) {
     CURL* curl = curl_easy_init();
     if (!curl) return std::nullopt;
@@ -108,6 +120,7 @@ std::optional<JevBridge::RelayReply> JevBridge::Request(const std::string& url, 
                           mode == "jev" ? Status::Jev : Status::Mock};
     } catch (...) { return std::nullopt; }
 }
+#endif
 
 void JevBridge::Poll(Game& game) {
     if (!Configured()) return;
