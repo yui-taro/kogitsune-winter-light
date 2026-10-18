@@ -420,7 +420,9 @@ void Present(RenderTexture2D canvas) {
 int main() {
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT);
     InitWindow(1360, 765, "こぎつねと冬の灯り");
-    SetWindowMinSize(960, 540);
+#ifndef PLATFORM_WEB
+    SetWindowMinSize(960, 540);  // In the browser the canvas follows the page size instead.
+#endif
     SetWindowFocused();
     SetExitKey(KEY_NULL);  // Escape opens the pause overlay instead of closing the window.
     SetTargetFPS(60);
