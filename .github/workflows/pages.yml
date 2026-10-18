@@ -43,6 +43,8 @@ jobs:
           mv _site/kogitsune-trailer-40s.mp4 _site/trailer-40s.mp4
           mv _site/kogitsune-poster.jpg _site/poster.jpg
           cp game/assets/MUSIC-CREDITS.txt _site/
+          cp game/assets/title-background-v1.png _site/title-background.png
+          cp game/assets/title-logo-v1.png _site/title-logo.png
           touch _site/.nojekyll
           ls -la _site
       - uses: actions/upload-pages-artifact@v3
