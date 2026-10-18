@@ -1,14 +1,28 @@
+import {createHash, createHmac, randomBytes, timingSafeEqual} from 'node:crypto';
 import http from 'node:http';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
-const host = '127.0.0.1';
-const port = Number(process.env.JEV_RELAY_PORT || 8787);
+// Local by default. A hosted relay sets JEV_RELAY_HOST=0.0.0.0 and gets PORT from the host.
+const host = process.env.JEV_RELAY_HOST || '127.0.0.1';
+const port = Number(process.env.JEV_RELAY_PORT ?? process.env.PORT ?? 8787);
 const apiKey = process.env.TYPESAFE_API_KEY || '';
 const mock = process.env.JEV_MOCK === '1';
 const apiUrl = process.env.TYPESAFE_API_URL || 'https://api.typesafe.ai/v1/systemone';
 // Pin a versioned model so results stay comparable; 'jev-latest' may move between test runs.
 const model = process.env.JEV_MODEL || 'jev-1.13.0';
+
+// Public (browser) access. With RELAY_PASSWORDS unset the relay needs no login, as before.
+const passwords = (process.env.RELAY_PASSWORDS || '').split(',').map(value => value.trim()).filter(Boolean);
+const authRequired = passwords.length > 0;
+const sessionSecret = process.env.RELAY_SESSION_SECRET || '';
+const allowedOrigins = new Set((process.env.RELAY_ALLOWED_ORIGINS || '').split(',')
+  .map(value => value.trim().replace(/\/$/, '')).filter(Boolean));
+const dailyLimit = Number(process.env.RELAY_DAILY_LIMIT || 1000);
+const perMinuteLimit = Number(process.env.RELAY_PER_MINUTE_LIMIT || 20);
+const sessionHours = Number(process.env.RELAY_SESSION_HOURS || 12);
+const loginFailureLimit = 10;
+const loginWindowMs = 15 * 60 * 1000;
 const names = new Set([
   'guard_lantern', 'inspect_bell', 'inspect_tracks', 'inspect_last_seen',
   'watch_exit', 'watch_torii_exit', 'watch_log_exit', 'follow_visible_clue', 'wait_and_watch',
@@ -111,6 +125,68 @@ function mockChoice(request) {
   return legal.has('guard_lantern') ? 'guard_lantern' : request.legalIntents[0];
 }
 
+// ---- login sessions and limits ----
+function configProblem() {
+  if (!authRequired) return null;
+  if (passwords.some(value => value.length < 8)) return 'every RELAY_PASSWORDS entry needs 8 or more characters';
+  if (sessionSecret.length < 32) return 'RELAY_SESSION_SECRET needs 32 or more characters';
+  return null;
+}
+const digest = value => createHash('sha256').update(value).digest();
+function passwordMatches(candidate) {
+  if (typeof candidate !== 'string' || candidate.length === 0 || candidate.length > 200) return false;
+  const given = digest(candidate);
+  let matched = false;
+  for (const value of passwords) matched = timingSafeEqual(given, digest(value)) || matched;
+  return matched;
+}
+const sign = payload => createHmac('sha256', sessionSecret).update(payload).digest('base64url');
+function issueToken(now = Date.now()) {
+  const payload = Buffer.from(JSON.stringify({sid: randomBytes(9).toString('base64url'),
+    exp: now + sessionHours * 3600 * 1000})).toString('base64url');
+  return `${payload}.${sign(payload)}`;
+}
+function verifyToken(token, now = Date.now()) {
+  if (typeof token !== 'string') return null;
+  const [payload, signature] = token.split('.');
+  if (!payload || !signature) return null;
+  const expected = Buffer.from(sign(payload));
+  const given = Buffer.from(signature);
+  if (expected.length !== given.length || !timingSafeEqual(expected, given)) return null;
+  try {
+    const session = JSON.parse(Buffer.from(payload, 'base64url').toString());
+    return typeof session.sid === 'string' && Number.isFinite(session.exp) && session.exp > now ? session : null;
+  } catch { return null; }
+}
+
+const loginFailures = new Map();
+const sessionCalls = new Map();
+let day = '';
+let dayCount = 0;
+function clientAddress(req) {
+  return (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || 'unknown';
+}
+function loginBlocked(address, now = Date.now()) {
+  const recent = (loginFailures.get(address) || []).filter(time => now - time < loginWindowMs);
+  loginFailures.set(address, recent);
+  return recent.length >= loginFailureLimit;
+}
+function recordLoginFailure(address, now = Date.now()) {
+  loginFailures.set(address, [...(loginFailures.get(address) || []), now]);
+}
+// Returns null when the call may proceed, otherwise the reason it is refused.
+function takeDecisionSlot(sid, now = Date.now()) {
+  const today = new Date(now).toISOString().slice(0, 10);
+  if (today !== day) { day = today; dayCount = 0; sessionCalls.clear(); }
+  if (dayCount >= dailyLimit) return 'daily limit reached';
+  const recent = (sessionCalls.get(sid) || []).filter(time => now - time < 60000);
+  if (recent.length >= perMinuteLimit) return 'too many requests';
+  recent.push(now);
+  sessionCalls.set(sid, recent);
+  dayCount += 1;
+  return null;
+}
+
 export {normalize, mockChoice};
 
 async function decide(request) {
@@ -150,37 +226,85 @@ async function decide(request) {
   const choice = output?.answers?.guardian_intent?.choice;
   // One line per answered request, for cost tracking. Never includes the key or observations.
   process.stdout.write(`${JSON.stringify({event: 'jev_usage', model: output?.model ?? null,
-    inputTokens: output?.usage?.input_tokens ?? null})}\n`);
+    inputTokens: output?.usage?.input_tokens ?? null, today: dayCount})}\n`);
   if (!request.legalIntents.includes(choice)) throw new Error('Jev returned an illegal choice');
   return choice;
 }
 
-function send(res, status, payload) {
+function corsHeaders(req) {
+  const origin = (req.headers.origin || '').replace(/\/$/, '');
+  if (!origin || !allowedOrigins.has(origin)) return {};
+  return {'Access-Control-Allow-Origin': origin, Vary: 'Origin',
+          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+          'Access-Control-Max-Age': '600'};
+}
+
+function send(res, status, payload, extra = {}) {
   const body = JSON.stringify(payload);
   res.writeHead(status, {'Content-Type': 'application/json; charset=utf-8',
-                         'Cache-Control': 'no-store', 'Content-Length': Buffer.byteLength(body)});
+                         'Cache-Control': 'no-store', 'Content-Length': Buffer.byteLength(body), ...extra});
   res.end(body);
 }
 
+async function readBody(req) {
+  let text = '';
+  for await (const chunk of req) {
+    text += chunk;
+    if (text.length > 16384) throw new Error('request too large');
+  }
+  return text;
+}
+
 const server = http.createServer(async (req, res) => {
+  const cors = corsHeaders(req);
+  const reply = (status, payload) => send(res, status, payload, cors);
+  if (req.method === 'OPTIONS') {
+    res.writeHead(Object.keys(cors).length ? 204 : 403, cors);
+    res.end();
+    return;
+  }
   if (req.method === 'GET' && req.url === '/health') {
-    send(res, 200, {ready: mock || Boolean(apiKey), mode: mock ? 'mock' : 'jev'});
+    reply(200, {ready: mock || Boolean(apiKey), mode: mock ? 'mock' : 'jev', login: authRequired});
+    return;
+  }
+  if (req.method === 'POST' && req.url === '/login') {
+    const address = clientAddress(req);
+    if (!authRequired) { reply(404, {error: 'login is not enabled'}); return; }
+    if (loginBlocked(address)) { reply(429, {error: 'too many attempts'}); return; }
+    let password;
+    try { password = JSON.parse(await readBody(req)).password; } catch { reply(400, {error: 'invalid request'}); return; }
+    if (!passwordMatches(password)) {
+      recordLoginFailure(address);
+      process.stdout.write(`${JSON.stringify({event: 'login', ok: false})}\n`);
+      reply(401, {error: 'wrong password'});
+      return;
+    }
+    process.stdout.write(`${JSON.stringify({event: 'login', ok: true})}\n`);
+    reply(200, {token: issueToken(), expiresInHours: sessionHours});
     return;
   }
   if (req.method !== 'POST' || req.url !== '/decision') {
-    send(res, 404, {error: 'not found'});
+    reply(404, {error: 'not found'});
     return;
   }
+  let sid = 'local';
+  if (authRequired) {
+    const session = verifyToken((req.headers.authorization || '').replace(/^Bearer /, ''));
+    if (!session) { reply(401, {error: 'login required'}); return; }
+    sid = session.sid;
+  }
   try {
-    let text = '';
-    for await (const chunk of req) {
-      text += chunk;
-      if (text.length > 16384) throw new Error('request too large');
+    const request = normalize(JSON.parse(await readBody(req)));
+    const refused = takeDecisionSlot(sid);
+    if (refused) {
+      process.stderr.write(`${JSON.stringify({event: 'jev_refused', reason: refused})}\n`);
+      reply(429, {error: refused});
+      return;
     }
-    const request = normalize(JSON.parse(text));
     const choice = await decide(request);
-    send(res, 200, {attemptId: request.attemptId, decisionId: request.decisionId,
-                    revision: request.revision, choice, mode: mock ? 'mock' : 'jev'});
+    reply(200, {attemptId: request.attemptId, decisionId: request.decisionId,
+                revision: request.revision, choice, mode: mock ? 'mock' : 'jev'});
   } catch (error) {
     const badInput = error instanceof SyntaxError || /^invalid|^request too large/.test(error.message);
     if (!badInput) {
@@ -191,11 +315,13 @@ const server = http.createServer(async (req, res) => {
         error.message === 'Jev returned an illegal choice' ? 'illegal_choice' : 'connection_or_response_error';
       process.stderr.write(`${JSON.stringify({event: 'jev_error', reason})}\n`);
     }
-    send(res, badInput ? 400 : 503, {error: badInput ? 'invalid request' : 'decision unavailable'});
+    reply(badInput ? 400 : 503, {error: badInput ? 'invalid request' : 'decision unavailable'});
   }
 });
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  const problem = configProblem();
+  if (problem) { process.stderr.write(`relay not started: ${problem}\n`); process.exit(1); }
   server.listen(port, host, () => {
     process.stdout.write(`Jev relay listening at http://${host}:${server.address().port}\n`);
   });

@@ -32,6 +32,14 @@
       background: rgba(3, 8, 14, 0.92); z-index: 10; }
     #video-modal video { width: min(1280px, 100%); max-height: 86vh; border-radius: 10px; background: #000; }
     #video-modal .close { position: absolute; top: 14px; right: 16px; }
+    #login { display: none; flex-direction: column; align-items: center; gap: 8px; padding: 12px 18px; border-radius: 14px;
+      background: rgba(20, 35, 51, 0.82); border: 1px solid rgba(244, 187, 98, 0.45); }
+    #login .row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+    #login input { font: inherit; font-size: 16px; padding: 9px 12px; border-radius: 10px; width: 220px;
+      border: 1px solid rgba(248, 239, 220, 0.5); background: rgba(6, 16, 26, 0.85); color: var(--ivory); }
+    #login button { font-size: 16px; padding: 9px 18px; }
+    #login-status { font-size: 14px; min-height: 1.3em; }
+    #login-status.ok { color: var(--gold); }
     #trailer-mini { position: fixed; left: 50%; bottom: 8px; transform: translateX(-50%); display: none;
       font-size: 13px; padding: 5px 14px; border-width: 1px; opacity: 0.55; }
     #trailer-mini:hover { opacity: 1; }
@@ -45,6 +53,14 @@
     <p>凍える弟妹のために、子狐が山の神社の灯籠を盗み出す。灯籠を守る狛犬は、見聞きした手掛かりから次の一手を選ぶ。</p>
     <div class="bar"><div id="progress"></div></div>
     <div id="status">読み込み中…</div>
+    <form id="login" autocomplete="on">
+      <div>ログインすると、狛犬が AI「Jev」で考えて動きます</div>
+      <div class="row">
+        <input id="password" type="password" placeholder="パスワード" autocomplete="current-password" aria-label="パスワード">
+        <button id="login-btn" type="submit">ログイン</button>
+      </div>
+      <div id="login-status">ログインしなくても遊べます（狛犬はローカル判断）</div>
+    </form>
     <div class="buttons">
       <button id="start" class="primary" disabled>はじめる</button>
       <button id="trailer">紹介動画を見る</button>
@@ -58,6 +74,7 @@
     <video id="video" src="trailer-40s.mp4" poster="poster.jpg" controls playsinline preload="none"></video>
   </div>
 
+  <script src="relay-config.js"></script>
   <script>
     var overlay = document.getElementById("overlay");
     var startBtn = document.getElementById("start");
@@ -89,7 +106,69 @@
     };
     window.onerror = function () { statusEl.textContent = "読み込みに失敗しました。ページを再読み込みしてください。"; };
 
+    // ---- Jev relay login (only shown when the site has a relay configured) ----
+    var relayUrl = (window.KOGITSUNE_RELAY_URL || "").replace(/\/+$/, "");
+    var loginForm = document.getElementById("login");
+    var loginStatus = document.getElementById("login-status");
+    var loginBtn = document.getElementById("login-btn");
+    var passwordEl = document.getElementById("password");
+    function token() { try { return sessionStorage.getItem("kogitsune-token") || ""; } catch (e) { return ""; } }
+    function showLoggedIn() {
+      loginStatus.className = "ok";
+      loginStatus.textContent = "ログイン中：狛犬は Jev で考えます";
+      passwordEl.style.display = "none";
+      loginBtn.textContent = "ログアウト";
+    }
+    function showLoggedOut(message) {
+      loginStatus.className = "";
+      loginStatus.textContent = message || "ログインしなくても遊べます（狛犬はローカル判断）";
+      passwordEl.style.display = "";
+      loginBtn.textContent = "ログイン";
+    }
+    Module.onRelayLoggedOut = function () { showLoggedOut("ログインの期限が切れました。狛犬はローカル判断に切り替わりました"); };
+    if (relayUrl) {
+      loginForm.style.display = "flex";
+      if (token()) showLoggedIn();
+      // Wake a sleeping free-tier relay early so the first login is quick.
+      fetch(relayUrl + "/health").catch(function () {});
+    }
+    loginForm.addEventListener("submit", function (e) {
+      e.preventDefault();
+      if (token()) { try { sessionStorage.removeItem("kogitsune-token"); } catch (x) {} showLoggedOut(); return; }
+      var password = passwordEl.value;
+      if (!password) { loginStatus.textContent = "パスワードを入力してください"; return; }
+      loginBtn.disabled = true;
+      loginStatus.className = "";
+      loginStatus.textContent = "確認しています…";
+      var slow = setTimeout(function () { loginStatus.textContent = "サーバーを起こしています（最大1分ほど）…"; }, 3000);
+      var controller = new AbortController();
+      var timer = setTimeout(function () { controller.abort(); }, 70000);
+      fetch(relayUrl + "/login", {method: "POST", headers: {"Content-Type": "application/json"},
+                                  body: JSON.stringify({password: password}), signal: controller.signal})
+        .then(function (r) { return r.json().catch(function () { return {}; }).then(function (b) { return [r.status, b]; }); })
+        .then(function (res) {
+          if (res[0] === 200 && res[1].token) {
+            try { sessionStorage.setItem("kogitsune-token", res[1].token); } catch (x) {}
+            passwordEl.value = "";
+            showLoggedIn();
+          } else if (res[0] === 401) {
+            showLoggedOut("パスワードが違います");
+          } else if (res[0] === 429) {
+            showLoggedOut("試行回数が多すぎます。15分ほど待ってからもう一度試してください");
+          } else {
+            showLoggedOut("ログインできませんでした。時間をおいて試してください");
+          }
+        })
+        .catch(function () { showLoggedOut("サーバーにつながりませんでした。時間をおいて試してください"); })
+        .then(function () { clearTimeout(slow); clearTimeout(timer); loginBtn.disabled = false; });
+    });
+
+    var started = false;
     startBtn.addEventListener("click", function () {
+      if (started) return;
+      started = true;
+      // main() runs only now, so the guardian mode matches the login state chosen above.
+      Module.callMain([]);
       overlay.style.display = "none";
       document.getElementById("trailer-mini").style.display = "block";
       canvas.focus();

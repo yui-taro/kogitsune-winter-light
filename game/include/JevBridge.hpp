@@ -22,9 +22,14 @@ public:
 private:
     struct RelayReply { DecisionResponse decision; Status source; };
     static std::optional<RelayReply> Request(const std::string& url, const DecisionRequest& request);
+    static std::optional<RelayReply> Parse(const std::string& body, const DecisionRequest& request);
+    void Finish(Game& game, std::optional<RelayReply> response);
 
     std::string url_;
     std::future<std::optional<RelayReply>> job_{};
+#ifdef __EMSCRIPTEN__
+    int webJob_ = 0;  // id of the pending fetch, 0 when idle
+#endif
     std::optional<DecisionRequest> active_{};
     Status status_ = Status::Local;
 };

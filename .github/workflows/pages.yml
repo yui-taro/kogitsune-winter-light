@@ -35,6 +35,7 @@ jobs:
       - name: Assemble the site
         env:
           GH_TOKEN: ${{ github.token }}
+          RELAY_URL: ${{ vars.JEV_RELAY_URL }}
         run: |
           mkdir -p _site
           cp game/build-web/index.html game/build-web/index.js game/build-web/index.wasm game/build-web/index.data _site/
@@ -45,6 +46,9 @@ jobs:
           cp game/assets/MUSIC-CREDITS.txt _site/
           cp game/assets/title-background-v1.png _site/title-background.png
           cp game/assets/title-logo-v1.png _site/title-logo.png
+          # Public URL of the hosted Jev relay (repository variable). Empty means local-only play.
+          printf 'window.KOGITSUNE_RELAY_URL = %s;\n' "$(node -e 'process.stdout.write(JSON.stringify(process.env.RELAY_URL || ""))')" > _site/relay-config.js
+          cat _site/relay-config.js
           touch _site/.nojekyll
           ls -la _site
       - uses: actions/upload-pages-artifact@v3

@@ -116,7 +116,7 @@ test('V4: relay preserves request identity and returns only one legal choice', a
   await listening;
   const health = await fetch(`${baseUrl}/health`);
   assert.equal(health.status, 200);
-  assert.deepEqual(await health.json(), {ready: true, mode: 'mock'});
+  assert.deepEqual(await health.json(), {ready: true, mode: 'mock', login: false});
   const response = await post(fixture());
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(),
@@ -256,7 +256,7 @@ test('Jev request pins a versioned model and the relay logs reported usage', asy
   const response = await postJev(fixture());
   assert.equal(response.status, 200);
   assert.equal(upstreamCalls[0].body.model, 'jev-1.13.0');
-  assert.match(jevRelayOutput, /\{"event":"jev_usage","model":"jev-1\.13\.0","inputTokens":321\}/);
+  assert.match(jevRelayOutput, /\{"event":"jev_usage","model":"jev-1\.13\.0","inputTokens":321,"today":\d+\}/);
   assert.doesNotMatch(jevRelayOutput, /test-only-key|bellPosition/);
 });
 
@@ -279,5 +279,106 @@ test('V4/J-08: Jev 429, 529, malformed, and illegal replies become one unavailab
     assert.deepEqual(await response.json(), {error: 'decision unavailable'});
     // The relay must not hammer the API with rapid retries for the same request.
     assert.equal(upstreamCalls.length, 1, JSON.stringify(failure));
+  }
+});
+
+
+// ---- public relay: login, CORS, and limits ----
+function startRelay(env) {
+  const proc = spawn(process.execPath, ['relay.mjs'], {
+    cwd: import.meta.dirname,
+    env: {...process.env, JEV_MOCK: '1', JEV_RELAY_PORT: '0', TYPESAFE_API_KEY: '', ...env},
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  after(() => proc.kill());
+  let output = '';
+  const url = new Promise((resolveReady, rejectReady) => {
+    const timeout = setTimeout(() => rejectReady(new Error(`relay did not start: ${output}`)), 5000);
+    proc.stdout.on('data', chunk => {
+      output += chunk;
+      const match = output.match(/http:\/\/127\.0\.0\.1:(\d+)/);
+      if (match) { clearTimeout(timeout); resolveReady(`http://127.0.0.1:${match[1]}`); }
+    });
+    proc.stderr.on('data', chunk => { output += chunk; });
+    proc.on('exit', code => { clearTimeout(timeout); rejectReady(new Error(`relay exit ${code}: ${output}`)); });
+  });
+  return {url, output: () => output, proc};
+}
+
+const origin = 'https://yui-taro.github.io';
+const secure = startRelay({RELAY_PASSWORDS: 'snow-lantern-01, second-pass-02',
+  RELAY_SESSION_SECRET: 'x'.repeat(40), RELAY_ALLOWED_ORIGINS: `${origin}/`,
+  RELAY_PER_MINUTE_LIMIT: '2', RELAY_DAILY_LIMIT: '4'});
+
+async function login(password, headers = {}) {
+  return fetch(`${await secure.url}/login`, {method: 'POST',
+    headers: {'Content-Type': 'application/json', ...headers}, body: JSON.stringify({password})});
+}
+async function decide(token) {
+  return fetch(`${await secure.url}/decision`, {method: 'POST',
+    headers: {'Content-Type': 'application/json', ...(token ? {Authorization: `Bearer ${token}`} : {})},
+    body: JSON.stringify(fixture())});
+}
+
+test('public relay: decisions need a login and the password decides it', async () => {
+  const health = await fetch(`${await secure.url}/health`);
+  assert.deepEqual(await health.json(), {ready: true, mode: 'mock', login: true});
+  assert.equal((await decide()).status, 401);
+  assert.equal((await decide('forged.token')).status, 401);
+  assert.equal((await login('wrong-password')).status, 401);
+  const ok = await login('second-pass-02');
+  assert.equal(ok.status, 200);
+  const {token} = await ok.json();
+  const tampered = token.replace(/^./, c => (c === 'a' ? 'b' : 'a'));
+  assert.equal((await decide(tampered)).status, 401);
+  const decision = await decide(token);
+  assert.equal(decision.status, 200);
+  assert.equal((await decision.json()).choice, 'inspect_bell');
+  assert.doesNotMatch(secure.output(), /second-pass-02|snow-lantern-01/);
+});
+
+test('public relay: only the allowed origin gets CORS headers', async () => {
+  const preflight = await fetch(`${await secure.url}/decision`, {method: 'OPTIONS',
+    headers: {Origin: origin, 'Access-Control-Request-Method': 'POST'}});
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get('access-control-allow-origin'), origin);
+  assert.match(preflight.headers.get('access-control-allow-headers'), /Authorization/);
+  const other = await fetch(`${await secure.url}/decision`, {method: 'OPTIONS',
+    headers: {Origin: 'https://evil.example', 'Access-Control-Request-Method': 'POST'}});
+  assert.equal(other.status, 403);
+  assert.equal(other.headers.get('access-control-allow-origin'), null);
+  const loginReply = await login('wrong-password', {Origin: origin});
+  assert.equal(loginReply.headers.get('access-control-allow-origin'), origin);
+});
+
+test('public relay: per-minute and daily limits refuse extra decisions', async () => {
+  const {token: first} = await (await login('snow-lantern-01')).json();
+  const {token: second} = await (await login('snow-lantern-01')).json();
+  // One decision was already used by the earlier test; the daily limit is 4.
+  assert.equal((await decide(first)).status, 200);
+  assert.equal((await decide(first)).status, 200);
+  const perMinute = await decide(first);
+  assert.equal(perMinute.status, 429);
+  assert.equal((await perMinute.json()).error, 'too many requests');
+  assert.equal((await decide(second)).status, 200);
+  const daily = await decide(second);
+  assert.equal(daily.status, 429);
+  assert.equal((await daily.json()).error, 'daily limit reached');
+});
+
+test('public relay: repeated wrong passwords are blocked', async () => {
+  const relay = startRelay({RELAY_PASSWORDS: 'another-pass-1', RELAY_SESSION_SECRET: 'y'.repeat(40)});
+  const url = await relay.url;
+  const attempt = password => fetch(`${url}/login`, {method: 'POST',
+    headers: {'Content-Type': 'application/json'}, body: JSON.stringify({password})});
+  for (let i = 0; i < 10; i++) assert.equal((await attempt('nope-nope')).status, 401);
+  assert.equal((await attempt('another-pass-1')).status, 429);
+});
+
+test('public relay: weak settings stop the relay from starting', async () => {
+  for (const env of [{RELAY_PASSWORDS: 'short', RELAY_SESSION_SECRET: 'z'.repeat(40)},
+                     {RELAY_PASSWORDS: 'long-enough-pass', RELAY_SESSION_SECRET: 'short'}]) {
+    const relay = startRelay(env);
+    await assert.rejects(relay.url, /relay exit 1: relay not started/);
   }
 });

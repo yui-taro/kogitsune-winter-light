@@ -34,6 +34,8 @@ web: $(SOURCES) web/shell.html
 		$(RAYLIB_WEB_DIR)/src/libraylib.web.a -o build-web/index.html \
 		-sUSE_GLFW=3 -sASYNCIFY -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=268435456 \
 		-sGL_ENABLE_GET_PROC_ADDRESS=1 -sSTACK_SIZE=1048576 \
+		-sINVOKE_RUN=0 -sEXPORTED_RUNTIME_METHODS=callMain \
+		'-sDEFAULT_LIBRARY_FUNCS_TO_INCLUDE=$$stringToNewUTF8,$$UTF8ToString' \
 		$(foreach f,$(WEB_ASSETS),--preload-file $(f)@/assets/$(notdir $(f))) \
 		--shell-file web/shell.html
 

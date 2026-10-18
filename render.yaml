@@ -1,0 +1,31 @@
+# Render Blueprint: hosts server/relay.mjs so the browser version can use Jev.
+# Secrets (API key, passwords) are entered in the Render dashboard, never in this file.
+services:
+  - type: web
+    name: kogitsune-jev-relay
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: "true"
+    startCommand: node relay.mjs
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: JEV_RELAY_HOST
+        value: 0.0.0.0
+      - key: RELAY_ALLOWED_ORIGINS
+        value: https://yui-taro.github.io
+      - key: RELAY_DAILY_LIMIT
+        value: "1000"
+      - key: RELAY_PER_MINUTE_LIMIT
+        value: "20"
+      - key: RELAY_SESSION_HOURS
+        value: "12"
+      - key: RELAY_SESSION_SECRET
+        generateValue: true
+      - key: TYPESAFE_API_KEY
+        sync: false
+      - key: RELAY_PASSWORDS
+        sync: false
