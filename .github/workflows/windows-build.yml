@@ -30,11 +30,16 @@ jobs:
           cmake -S game -B game/build-windows -A x64 `
             -DCMAKE_TOOLCHAIN_FILE="$env:RUNNER_TEMP/vcpkg/scripts/buildsystems/vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Build and test
         shell: pwsh
         run: |
           cmake --build game/build-windows --config Release
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          if (-not (Test-Path game/build-windows/Release/foxgame.exe)) { throw "foxgame.exe was not built" }
+          if (-not (Test-Path game/build-windows/Release/assets/music.pak)) { throw "assets were not copied" }
           ctest --test-dir game/build-windows -C Release --output-on-failure
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Include license notices
         shell: pwsh
         run: |

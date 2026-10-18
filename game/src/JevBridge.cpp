@@ -45,15 +45,15 @@ Json RequestJson(const DecisionRequest& request) {
     };
     if (k.bellHeard) {
         knowledge["bellPosition"] = PointJson(k.bellPosition);
-        knowledge["bellAge"] = std::max(0.0f, request.gameTime - k.lastBellAt);
+        knowledge["bellAge"] = (std::max)(0.0f, request.gameTime - k.lastBellAt);
     }
     if (k.tracksSeen) {
         knowledge["lastTracks"] = PointJson(k.lastTracks);
-        knowledge["tracksAge"] = std::max(0.0f, request.gameTime - k.lastTracksAt);
+        knowledge["tracksAge"] = (std::max)(0.0f, request.gameTime - k.lastTracksAt);
     }
     if (k.hasLastSeen) {
         knowledge["lastSeen"] = PointJson(k.lastSeen);
-        knowledge["lastSeenAge"] = std::max(0.0f, request.gameTime - k.lastSeenAt);
+        knowledge["lastSeenAge"] = (std::max)(0.0f, request.gameTime - k.lastSeenAt);
     }
     Json legal = Json::array();
     for (Intent intent : request.legalIntents) legal.push_back(IntentName(intent));
