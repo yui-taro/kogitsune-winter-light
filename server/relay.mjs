@@ -7,6 +7,8 @@ const port = Number(process.env.JEV_RELAY_PORT || 8787);
 const apiKey = process.env.TYPESAFE_API_KEY || '';
 const mock = process.env.JEV_MOCK === '1';
 const apiUrl = process.env.TYPESAFE_API_URL || 'https://api.typesafe.ai/v1/systemone';
+// Pin a versioned model so results stay comparable; 'jev-latest' may move between test runs.
+const model = process.env.JEV_MODEL || 'jev-1.13.0';
 const names = new Set([
   'guard_lantern', 'inspect_bell', 'inspect_tracks', 'inspect_last_seen',
   'watch_exit', 'follow_visible_clue', 'wait_and_watch',
@@ -99,7 +101,7 @@ async function decide(request) {
       },
       observed_facts: request.observations,
     },
-    model: 'jev-latest',
+    model,
     questions: {
       guardian_intent: {
         type: 'choice',
@@ -118,6 +120,9 @@ async function decide(request) {
   // A malformed upstream body is a Jev failure, not a client SyntaxError (400).
   const output = await response.json().catch(() => { throw new Error('Jev returned malformed JSON'); });
   const choice = output?.answers?.guardian_intent?.choice;
+  // One line per answered request, for cost tracking. Never includes the key or observations.
+  process.stdout.write(`${JSON.stringify({event: 'jev_usage', model: output?.model ?? null,
+    inputTokens: output?.usage?.input_tokens ?? null})}\n`);
   if (!request.legalIntents.includes(choice)) throw new Error('Jev returned an illegal choice');
   return choice;
 }

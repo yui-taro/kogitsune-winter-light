@@ -61,6 +61,8 @@ API キーなしで通信を試す場合は `JEV_MOCK=1 node server/relay.mjs` �
 
 実際の Jev 呼び出しには TypeSafe の Choice を使い、返答の `choice` だけを採用します。`probabilities` は抽選に使いません。中継は狐の真の位置や巣の事情を受け取らず、ゲーム側は試行 ID・判断 ID・改訂番号・合法候補を検査して古い返答を破棄します。
 
+中継は既定で固定版 `jev-1.13.0` を使います（`JEV_MODEL` で変更可）。実 API の応答ごとに、応答したモデルと入力トークン数を標準出力へ `{"event":"jev_usage","model":...,"inputTokens":...}` の形で1行記録します。
+
 ## 検証
 
 ```sh

@@ -177,6 +177,7 @@ const upstreamReady = new Promise(ready => upstream.listen(0, '127.0.0.1', ready
 after(() => upstream.close());
 
 let jevRelay;
+let jevRelayOutput = '';
 const jevRelayUrl = upstreamReady.then(() => new Promise((resolveReady, rejectReady) => {
   jevRelay = spawn(process.execPath, ['relay.mjs'], {
     cwd: import.meta.dirname,
@@ -184,15 +185,14 @@ const jevRelayUrl = upstreamReady.then(() => new Promise((resolveReady, rejectRe
           TYPESAFE_API_URL: `http://127.0.0.1:${upstream.address().port}/v1/systemone`},
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  let output = '';
-  const timeout = setTimeout(() => rejectReady(new Error(`jev relay did not start: ${output}`)), 5000);
+  const timeout = setTimeout(() => rejectReady(new Error(`jev relay did not start: ${jevRelayOutput}`)), 5000);
   jevRelay.stdout.on('data', chunk => {
-    output += chunk;
-    const match = output.match(/http:\/\/127\.0\.0\.1:(\d+)/);
+    jevRelayOutput += chunk;
+    const match = jevRelayOutput.match(/http:\/\/127\.0\.0\.1:(\d+)/);
     if (match) { clearTimeout(timeout); resolveReady(`http://127.0.0.1:${match[1]}`); }
   });
-  jevRelay.stderr.on('data', chunk => { output += chunk; });
-  jevRelay.on('exit', code => { clearTimeout(timeout); rejectReady(new Error(`jev relay exit ${code}: ${output}`)); });
+  jevRelay.stderr.on('data', chunk => { jevRelayOutput += chunk; });
+  jevRelay.on('exit', code => { clearTimeout(timeout); rejectReady(new Error(`jev relay exit ${code}: ${jevRelayOutput}`)); });
 }));
 after(() => jevRelay?.kill());
 
@@ -218,6 +218,17 @@ test('J-07/V4: Jev request carries only normalized observations and legal criter
   assert.deepEqual(Object.keys(sent.body.questions.guardian_intent.criteria), request.legalIntents);
   const text = JSON.stringify(sent.body);
   assert.doesNotMatch(text, /hiddenFoxPosition|secretNestLocation|attemptId|decisionId|test-only-key/);
+});
+
+test('Jev request pins a versioned model and the relay logs reported usage', async () => {
+  upstreamCalls.length = 0;
+  upstreamReply = () => [200, {model: 'jev-1.13.0', usage: {input_tokens: 321},
+                               answers: {guardian_intent: {choice: 'inspect_bell'}}}];
+  const response = await postJev(fixture());
+  assert.equal(response.status, 200);
+  assert.equal(upstreamCalls[0].body.model, 'jev-1.13.0');
+  assert.match(jevRelayOutput, /\{"event":"jev_usage","model":"jev-1\.13\.0","inputTokens":321\}/);
+  assert.doesNotMatch(jevRelayOutput, /test-only-key|bellPosition/);
 });
 
 test('V4/J-08: Jev 429, 529, malformed, and illegal replies become one unavailable response', async () => {
