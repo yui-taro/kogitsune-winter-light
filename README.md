@@ -1,3 +1,15 @@
+# こぎつねと冬の灯り
+
+[![紹介動画（40秒）](https://github.com/yui-taro/kogitsune-winter-light/releases/download/v1.0.0/kogitsune-poster.jpg)](https://github.com/yui-taro/kogitsune-winter-light/releases/download/v1.0.0/kogitsune-trailer-40s.mp4)
+
+凍える弟妹のために、子狐が山の神社の灯籠を盗み出す 2.5D ステルスゲームです。灯籠を守る狛犬の次の一手は、AI「Jev」が、狛犬が実際に見聞きした手掛かりだけで選びます。
+
+- **遊ぶ：** [最新リリース](https://github.com/yui-taro/kogitsune-winter-light/releases/latest) から Mac（Apple Silicon）版または Windows 版をダウンロード
+- **紹介動画：** [40秒版](https://github.com/yui-taro/kogitsune-winter-light/releases/download/v1.0.0/kogitsune-trailer-40s.mp4)・[30秒版](https://github.com/yui-taro/kogitsune-winter-light/releases/download/v1.0.0/kogitsune-trailer-30s.mp4)
+- **ビルド・操作・Jev 中継：** [game/README.md](game/README.md)
+
+---
+
 # Jev ゲーム企画・調査
 
 TypeSafe AI の意思決定モデル Jev を使うゲームの調査作業場。ゲーム本体の方式を決める前に、小さな実験で面白さと運用条件を確かめる。
