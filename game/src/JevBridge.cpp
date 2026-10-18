@@ -14,11 +14,11 @@
 
 #ifdef __EMSCRIPTEN__
 // Browser build: the page stores the relay login token in sessionStorage and exposes the
-// relay base URL as window.KOGITSUNE_RELAY_URL. Requests run as fetch() calls polled per frame.
+// relay base URL (no trailing slash) as window.KOGITSUNE_RELAY_URL. Requests run as fetch() calls polled per frame.
 EM_JS(char*, kg_relay_url, (), {
     var url = "";
     try { if (sessionStorage.getItem("kogitsune-token")) url = window.KOGITSUNE_RELAY_URL || ""; } catch (e) {}
-    return stringToNewUTF8(url ? url.replace(/\/+$/, "") + "/decision" : "");
+    return stringToNewUTF8(url ? url + "/decision" : "");
 });
 EM_JS(int, kg_relay_start, (const char* url, const char* body), {
     Module.kgRelay = Module.kgRelay || {next: 0, slots: {}};

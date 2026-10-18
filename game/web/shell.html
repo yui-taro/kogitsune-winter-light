@@ -108,6 +108,7 @@
 
     // ---- Jev relay login (only shown when the site has a relay configured) ----
     var relayUrl = (window.KOGITSUNE_RELAY_URL || "").replace(/\/+$/, "");
+    window.KOGITSUNE_RELAY_URL = relayUrl;  // the game appends /decision
     var loginForm = document.getElementById("login");
     var loginStatus = document.getElementById("login-status");
     var loginBtn = document.getElementById("login-btn");
