@@ -20,7 +20,7 @@ run: $(TARGET)
 bundle: $(TARGET)
 	mkdir -p "build/こぎつねと冬の灯り.app/Contents/MacOS" "build/こぎつねと冬の灯り.app/Contents/Resources/assets"
 	cp $(TARGET) "build/こぎつねと冬の灯り.app/Contents/MacOS/foxgame"
-	cp assets/*.png assets/*.otf assets/*.txt "build/こぎつねと冬の灯り.app/Contents/Resources/assets/"
+	cp assets/*.png assets/*.otf assets/*.txt assets/*.ogg assets/*.pak "build/こぎつねと冬の灯り.app/Contents/Resources/assets/"
 	cp vendor/nlohmann/LICENSE.MIT "build/こぎつねと冬の灯り.app/Contents/Resources/LICENSE-json.txt"
 	cp vendor/raylib-LICENSE.txt "build/こぎつねと冬の灯り.app/Contents/Resources/LICENSE-raylib.txt"
 	cp Info.plist "build/こぎつねと冬の灯り.app/Contents/Info.plist"

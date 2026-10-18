@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>こぎつねと冬の灯り | タイトル画面案</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 100%; height: 100%; background: #061427; }
+    body { display: grid; place-items: center; overflow: hidden; }
+    .screen {
+      width: min(100vw, calc(100vh * 1672 / 941));
+      aspect-ratio: 1672 / 941;
+      position: relative;
+      overflow: hidden;
+      background: #08182f url('./title-background-v1.png') center / cover no-repeat;
+      box-shadow: 0 0 80px #000b;
+    }
+    .screen::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: linear-gradient(180deg, #05152a22, transparent 52%, #05152a33);
+    }
+    .logo {
+      position: absolute;
+      z-index: 1;
+      width: 48%;
+      left: 50%;
+      top: -1%;
+      transform: translateX(-50%);
+      filter: drop-shadow(0 9px 18px #0410249c);
+    }
+    .start {
+      position: absolute;
+      z-index: 1;
+      left: 50%;
+      bottom: 7%;
+      transform: translateX(-50%);
+      min-width: 18%;
+      padding: 0.7em 1.8em;
+      border: 1px solid #f2c47a;
+      border-radius: 999px;
+      background: #102844dc;
+      color: #fff4d9;
+      font: 600 clamp(16px, 2vw, 30px) / 1.3 serif;
+      letter-spacing: .16em;
+      text-align: center;
+      box-shadow: 0 8px 24px #07152aaa, inset 0 0 18px #f2bd6544;
+    }
+  </style>
+</head>
+<body>
+  <main class="screen" aria-label="タイトル画面の配置見本">
+    <img class="logo" src="./title-logo-v1.png" alt="こぎつねと冬の灯り">
+    <div class="start">はじめる</div>
+  </main>
+</body>
+</html>

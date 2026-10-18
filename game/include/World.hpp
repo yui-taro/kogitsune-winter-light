@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -14,15 +15,25 @@ struct Point {
 
 float Distance(Point a, Point b);
 
+struct CoverZone {
+    float left, top, right, bottom;
+    bool Contains(Point p) const {
+        return p.x > left && p.x < right && p.y > top && p.y < bottom;
+    }
+};
+
 enum class Stage {
     NestIntro, ForestOutbound, Approach, Courtyard, Escape, ForestReturn,
     NestEnding, Captured, SliceComplete, Complete
 };
+std::array<CoverZone, 2> BushCoverZones(Stage stage);
 enum class StartMode { FullStory, ShrinePractice };
 enum class GuardianForm { Stone, Awakening, Animal, Returning };
 enum class LanternOwner { Pedestal, Fox, Ground, Guardian };
-enum class Intent { GuardLantern, InspectBell, InspectTracks, InspectLastSeen, WatchExit, FollowVisibleClue, WaitAndWatch };
-enum class ObservationKind { BellHeard, TracksSeen, FoxSeen, FoxLost, EmptyPedestalSeen, LightSeen, InvestigationEmpty };
+enum class Intent { GuardLantern, InspectBell, InspectTracks, InspectLastSeen, WatchExit,
+                    WatchToriiExit, WatchLogExit, FollowVisibleClue, WaitAndWatch };
+enum class ObservationKind { BellHeard, TracksSeen, FoxSeen, FoxLost, EmptyPedestalSeen,
+                             LightSeen, LightLost, TracksInvestigated, InvestigationEmpty };
 
 const char* IntentName(Intent intent);
 
@@ -35,16 +46,24 @@ struct Footprint {
 
 struct Knowledge {
     bool bellHeard = false;
+    unsigned bellCount = 0;
+    float lastBellAt = 0.0f;
     bool tracksSeen = false;
+    bool tracksPending = false;
     bool foxVisible = false;
+    bool lightVisible = false;
     bool theftKnown = false;
     bool falseAlarm = false;
+    bool watchCompleted = false;
     bool hasLastSeen = false;
     bool lastSeenInForest = false;
     bool tracksSeenInForest = false;
     Point lastSeen{};
     Point lastTracks{};
     Point bellPosition{};
+    float lastSeenAt = 0.0f;
+    float lastTracksAt = 0.0f;
+    float lastTracksDecisionAt = -1000.0f;
     unsigned revision = 0;
 };
 
@@ -62,12 +81,16 @@ struct Fox {
 
 struct Guardian {
     Point position{1005.0f, 470.0f};
+    Point post{1005.0f, 470.0f};
     Point facing{-1.0f, 0.35f};
     Point target{1005.0f, 470.0f};
     GuardianForm form = GuardianForm::Stone;
     Intent intent = Intent::GuardLantern;
     float transformTimer = 0.0f;
     float warningTimer = 0.0f;
+    float waitTimer = 0.0f;
+    bool moving = false;
+    float walkDistance = 0.0f;
 };
 
 struct Lantern {
@@ -90,6 +113,7 @@ struct WorldState {
     bool windBellFired = false;
     bool nestTwigsTouched = false;
     bool guardianEnteredForest = false;
+    bool endingLanternPlaced = false;
 };
 
 struct Input {
@@ -108,6 +132,11 @@ struct DecisionRequest {
     unsigned revision = 0;
     Knowledge knowledge{};
     std::vector<Intent> legalIntents{};
+    Stage stage = Stage::Approach;
+    GuardianForm guardianForm = GuardianForm::Stone;
+    Intent currentIntent = Intent::GuardLantern;
+    Point guardianPosition{};
+    float gameTime = 0.0f;
 };
 
 struct DecisionResponse {
@@ -143,6 +172,7 @@ public:
     const std::string& Notice() const { return notice_; }
     const SoundEvents& Sounds() const { return soundEvents_; }
     bool HasCheckpointC() const { return checkpointC_.has_value(); }
+    bool FoxHidden() const { return InCover(world_.fox.position); }
     void SetExternalDecisionMode(bool enabled) { externalDecisions_ = enabled; }
 
     void Update(const Input& input, float dt);

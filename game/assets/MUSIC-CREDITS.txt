@@ -1,0 +1,25 @@
+Music used in こぎつねと冬の灯り
+
+Title: "White crystal" by FLASH☆BEAT
+https://opentracks.com/bgm/detail/8221
+
+Prologue and cold den: "雪の記憶" by Haruichi
+https://opentracks.com/bgm/detail/10271
+
+Forest (outbound and return): "森に潜む陰" by オオヒラセイジ
+https://opentracks.com/bgm/detail/8633
+
+Shrine: "神秘的な和の夜" by ゆうり(Yuli Audio Craft)
+https://opentracks.com/bgm/detail/5278
+
+Ending: "雪の終わりに" by MATSU
+https://opentracks.com/bgm/detail/18169
+
+Source: OpenTracks (formerly DOVA-SYNDROME)
+License: https://opentracks.com/help/articles/license/
+Game-use terms: https://opentracks.com/help/articles/game_trpg/
+
+The official MP3 downloads were volume-adjusted and converted to Ogg Vorbis
+for use as background music. The game stores the converted tracks in a packed
+resource and decodes them in memory at runtime. This credit file is supplied
+for provenance; the music remains copyrighted by its respective creators.

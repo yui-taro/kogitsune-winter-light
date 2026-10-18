@@ -9,9 +9,12 @@ function fixture() {
   return {
     attemptId: 2, decisionId: 7, revision: 3,
     legalIntents: ['guard_lantern', 'inspect_bell', 'wait_and_watch'],
+    guardian: {scene: 'shrine', form: 'stone', currentIntent: 'guard_lantern',
+               position: {x: 1005, y: 470}},
     knowledge: {
-      bellHeard: true, tracksSeen: false, foxVisible: false,
+      bellHeard: true, tracksSeen: false, tracksPending: false, foxVisible: false, lightVisible: false,
       theftKnown: false, falseAlarm: false, hasLastSeen: false,
+      bellCount: 1, bellAge: 0.5, watchCompleted: false,
       lastSeenInForest: false, tracksSeenInForest: false,
       bellPosition: {x: 350, y: 500},
     },
@@ -29,11 +32,13 @@ test('J-07: normalize forwards observed facts only', () => {
     attemptId: 2, decisionId: 7, revision: 3,
     legalIntents: request.legalIntents,
     observations: {
-      bellHeard: true, tracksSeen: false, foxVisible: false,
+      bellHeard: true, tracksSeen: false, tracksPending: false, foxVisible: false, lightVisible: false,
       theftKnown: false, previousBellInvestigationEmpty: false,
+      bellCount: 1, bellAge: 0.5, watchCompleted: false,
       lastSeenArea: 'shrine', lastTracksArea: 'shrine',
       bellPosition: {x: 350, y: 500},
     },
+    guardian: request.guardian,
   });
   assert.equal(mockChoice(normalized), 'inspect_bell');
 });
@@ -42,19 +47,34 @@ test('J-01..05: local substitute selects only from observed clues', () => {
   const cases = [
     [{}, ['guard_lantern', 'wait_and_watch'], 'guard_lantern'],
     [{bellHeard: true, bellPosition: {x: 350, y: 500}}, ['guard_lantern', 'inspect_bell'], 'inspect_bell'],
-    [{tracksSeen: true, lastTracks: {x: 550, y: 550}}, ['guard_lantern', 'inspect_tracks'], 'inspect_tracks'],
-    [{bellHeard: true, bellPosition: {x: 350, y: 500}, tracksSeen: true,
+    [{bellHeard: false, tracksSeen: true, tracksPending: true, lastTracks: {x: 550, y: 550}},
+     ['guard_lantern', 'inspect_tracks'], 'inspect_tracks'],
+    [{bellHeard: true, bellPosition: {x: 350, y: 500}, tracksSeen: true, tracksPending: true,
       lastTracks: {x: 550, y: 550}}, ['guard_lantern', 'inspect_bell', 'inspect_tracks'], 'inspect_tracks'],
+    [{bellHeard: false, tracksSeen: true, tracksPending: false, lastTracks: {x: 550, y: 550}},
+     ['guard_lantern', 'wait_and_watch'], 'guard_lantern'],
     [{bellHeard: true, bellPosition: {x: 350, y: 500}, falseAlarm: true},
-     ['guard_lantern', 'inspect_bell'], 'guard_lantern'],
-    [{theftKnown: true}, ['guard_lantern', 'watch_exit'], 'watch_exit'],
+     ['guard_lantern'], 'guard_lantern'],
+    [{theftKnown: true}, ['guard_lantern', 'watch_torii_exit', 'watch_log_exit'], 'watch_log_exit'],
     [{foxVisible: true}, ['guard_lantern', 'follow_visible_clue'], 'follow_visible_clue'],
+    [{lightVisible: true}, ['guard_lantern', 'follow_visible_clue'], 'follow_visible_clue'],
   ];
   for (const [knowledge, legalIntents, expected] of cases) {
     const normalized = normalize({...fixture(), legalIntents,
-      knowledge: {...fixture().knowledge, ...knowledge}});
+      knowledge: {...fixture().knowledge, ...knowledge,
+        bellCount: knowledge.bellHeard === false ? 0 : 1,
+        ...(knowledge.tracksSeen ? {tracksAge: 0.2} : {}),
+        ...(knowledge.hasLastSeen ? {lastSeenAge: 0.2} : {})}});
     assert.equal(mockChoice(normalized), expected);
   }
+});
+
+test('exit choice follows the guardian position', () => {
+  const request = fixture();
+  request.guardian.position = {x: 200, y: 735};
+  request.knowledge.theftKnown = true;
+  request.legalIntents = ['watch_torii_exit', 'watch_log_exit'];
+  assert.equal(mockChoice(normalize(request)), 'watch_torii_exit');
 });
 
 const child = spawn(process.execPath, ['relay.mjs'], {
@@ -100,7 +120,7 @@ test('V4: relay preserves request identity and returns only one legal choice', a
   const response = await post(fixture());
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(),
-    {attemptId: 2, decisionId: 7, revision: 3, choice: 'inspect_bell'});
+    {attemptId: 2, decisionId: 7, revision: 3, choice: 'inspect_bell', mode: 'mock'});
   assert.equal(response.headers.get('cache-control'), 'no-store');
 });
 
@@ -115,11 +135,19 @@ test('V4: relay rejects malformed identity, evidence, candidates, and oversized 
     {...fixture(), legalIntents: ['follow_visible_clue']},
     {...fixture(), legalIntents: ['inspect_tracks']},
     {...fixture(), legalIntents: ['watch_exit']},
+    {...fixture(), legalIntents: ['watch_log_exit']},
+    {...fixture(), guardian: {...fixture().guardian, currentIntent: 'teleport_to_nest'}},
+    {...fixture(), guardian: {...fixture().guardian, position: {x: -1, y: 470}}},
+    {...fixture(), knowledge: {...fixture().knowledge, bellAge: -1}},
+    {...fixture(), knowledge: {...fixture().knowledge, bellCount: 0}},
     {...fixture(), knowledge: {...fixture().knowledge, bellHeard: 'true'}},
     {...fixture(), knowledge: {...fixture().knowledge, bellPosition: {x: -1, y: 500}}},
     {...fixture(), knowledge: {...fixture().knowledge, bellPosition: {x: 350}}},
     {...fixture(), knowledge: {...fixture().knowledge, hasLastSeen: true}},
     {...fixture(), knowledge: {...fixture().knowledge, tracksSeen: true}},
+    {...fixture(), knowledge: {...fixture().knowledge, tracksPending: true}},
+    {...fixture(), knowledge: {...fixture().knowledge, tracksSeen: true, tracksPending: false,
+                                lastTracks: {x: 550, y: 550}}, legalIntents: ['inspect_tracks']},
     '{broken JSON',
     JSON.stringify(fixture()) + ' '.repeat(17000),
   ];
@@ -210,11 +238,12 @@ test('J-07/V4: Jev request carries only normalized observations and legal criter
   request.knowledge.secretNestLocation = {x: 10, y: 20};
   const response = await postJev(request);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), {attemptId: 2, decisionId: 7, revision: 3, choice: 'inspect_bell'});
+  assert.deepEqual(await response.json(), {attemptId: 2, decisionId: 7, revision: 3, choice: 'inspect_bell', mode: 'jev'});
   assert.equal(upstreamCalls.length, 1);
   const sent = upstreamCalls[0];
   assert.equal(sent.authorization, 'Bearer test-only-key');
   assert.deepEqual(sent.body.state.observed_facts, normalize(request).observations);
+  assert.deepEqual(sent.body.state.guardian_now, normalize(request).guardian);
   assert.deepEqual(Object.keys(sent.body.questions.guardian_intent.criteria), request.legalIntents);
   const text = JSON.stringify(sent.body);
   assert.doesNotMatch(text, /hiddenFoxPosition|secretNestLocation|attemptId|decisionId|test-only-key/);

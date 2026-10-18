@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <iostream>
 
 namespace foxgame {
 namespace {
@@ -20,31 +21,57 @@ size_t Receive(char* data, size_t size, size_t count, void* user) {
 }
 
 Json PointJson(Point point) { return {{"x", point.x}, {"y", point.y}}; }
+const char* SceneName(Stage stage) { return stage == Stage::ForestReturn ? "forest" : "shrine"; }
+const char* FormName(GuardianForm form) {
+    switch (form) {
+        case GuardianForm::Stone: return "stone";
+        case GuardianForm::Awakening: return "awakening";
+        case GuardianForm::Animal: return "animal";
+        case GuardianForm::Returning: return "returning";
+    }
+    return "stone";
+}
 
 Json RequestJson(const DecisionRequest& request) {
     const auto& k = request.knowledge;
     Json knowledge = {
         {"bellHeard", k.bellHeard}, {"tracksSeen", k.tracksSeen},
-        {"foxVisible", k.foxVisible}, {"theftKnown", k.theftKnown},
-        {"falseAlarm", k.falseAlarm}, {"hasLastSeen", k.hasLastSeen},
+        {"tracksPending", k.tracksPending},
+        {"foxVisible", k.foxVisible}, {"lightVisible", k.lightVisible},
+        {"theftKnown", k.theftKnown},
+        {"falseAlarm", k.falseAlarm}, {"watchCompleted", k.watchCompleted},
+        {"bellCount", k.bellCount}, {"hasLastSeen", k.hasLastSeen},
         {"lastSeenInForest", k.lastSeenInForest}, {"tracksSeenInForest", k.tracksSeenInForest},
     };
-    if (k.bellHeard) knowledge["bellPosition"] = PointJson(k.bellPosition);
-    if (k.tracksSeen) knowledge["lastTracks"] = PointJson(k.lastTracks);
-    if (k.hasLastSeen) knowledge["lastSeen"] = PointJson(k.lastSeen);
+    if (k.bellHeard) {
+        knowledge["bellPosition"] = PointJson(k.bellPosition);
+        knowledge["bellAge"] = std::max(0.0f, request.gameTime - k.lastBellAt);
+    }
+    if (k.tracksSeen) {
+        knowledge["lastTracks"] = PointJson(k.lastTracks);
+        knowledge["tracksAge"] = std::max(0.0f, request.gameTime - k.lastTracksAt);
+    }
+    if (k.hasLastSeen) {
+        knowledge["lastSeen"] = PointJson(k.lastSeen);
+        knowledge["lastSeenAge"] = std::max(0.0f, request.gameTime - k.lastSeenAt);
+    }
     Json legal = Json::array();
     for (Intent intent : request.legalIntents) legal.push_back(IntentName(intent));
     return {{"attemptId", request.attemptId}, {"decisionId", request.decisionId},
-            {"revision", request.revision}, {"knowledge", knowledge}, {"legalIntents", legal}};
+            {"revision", request.revision}, {"knowledge", knowledge}, {"legalIntents", legal},
+            {"guardian", {{"scene", SceneName(request.stage)},
+                           {"form", FormName(request.guardianForm)},
+                           {"currentIntent", IntentName(request.currentIntent)},
+                           {"position", PointJson(request.guardianPosition)}}}};
 }
 
 } // namespace
 
 JevBridge::JevBridge(std::string relayUrl) : url_(std::move(relayUrl)) {
-    if (!url_.empty()) curl_global_init(CURL_GLOBAL_DEFAULT);
+    if (!url_.empty()) { curl_global_init(CURL_GLOBAL_DEFAULT); status_ = Status::Waiting; }
 }
 
-std::optional<DecisionResponse> JevBridge::Request(const std::string& url, const DecisionRequest& request) {
+std::optional<JevBridge::RelayReply> JevBridge::Request(const std::string& url, const DecisionRequest& request) {
     CURL* curl = curl_easy_init();
     if (!curl) return std::nullopt;
     std::string requestBody = RequestJson(request).dump();
@@ -70,12 +97,15 @@ std::optional<DecisionResponse> JevBridge::Request(const std::string& url, const
     try {
         Json response = Json::parse(responseBody);
         std::string name = response.at("choice").get<std::string>();
+        std::string mode = response.at("mode").get<std::string>();
+        if (mode != "jev" && mode != "mock") return std::nullopt;
         auto found = std::find_if(request.legalIntents.begin(), request.legalIntents.end(),
                                   [&](Intent intent) { return name == IntentName(intent); });
         if (found == request.legalIntents.end()) return std::nullopt;
-        return DecisionResponse{response.at("attemptId").get<std::uint64_t>(),
+        return RelayReply{DecisionResponse{response.at("attemptId").get<std::uint64_t>(),
                                 response.at("decisionId").get<std::uint64_t>(),
-                                response.at("revision").get<unsigned>(), *found};
+                                response.at("revision").get<unsigned>(), *found},
+                          mode == "jev" ? Status::Jev : Status::Mock};
     } catch (...) { return std::nullopt; }
 }
 
@@ -84,12 +114,17 @@ void JevBridge::Poll(Game& game) {
     if (job_.valid() && job_.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
         auto response = job_.get();
         if (response) {
-            if (game.ApplyDecision(*response)) degraded_ = false;
+            bool applied = game.ApplyDecision(response->decision);
+            if (applied) status_ = response->source;
+            std::cerr << "guardian decision " << active_->decisionId << ' '
+                      << (applied ? "applied " : "stale ") << IntentName(response->decision.choice) << '\n';
         } else if (active_) {
             LocalPersonalityPolicy fallback;
-            game.ApplyDecision({active_->attemptId, active_->decisionId, active_->revision,
-                                fallback.Choose(*active_)});
-            degraded_ = true;
+            Intent choice = fallback.Choose(*active_);
+            bool applied = game.ApplyDecision({active_->attemptId, active_->decisionId, active_->revision, choice});
+            status_ = Status::Fallback;
+            std::cerr << "guardian decision " << active_->decisionId << ' '
+                      << (applied ? "fallback " : "stale fallback ") << IntentName(choice) << '\n';
         }
         active_.reset();
     }

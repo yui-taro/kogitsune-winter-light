@@ -11,19 +11,22 @@ namespace foxgame {
 // The game talks only to a relay. The TypeSafe API key never enters this process.
 class JevBridge {
 public:
+    enum class Status { Local, Waiting, Jev, Mock, Fallback };
     explicit JevBridge(std::string relayUrl);
 
     bool Configured() const { return !url_.empty(); }
-    bool Degraded() const { return degraded_; }
+    bool Degraded() const { return status_ == Status::Fallback; }
+    Status CurrentStatus() const { return status_; }
     void Poll(Game& game);
 
 private:
-    static std::optional<DecisionResponse> Request(const std::string& url, const DecisionRequest& request);
+    struct RelayReply { DecisionResponse decision; Status source; };
+    static std::optional<RelayReply> Request(const std::string& url, const DecisionRequest& request);
 
     std::string url_;
-    std::future<std::optional<DecisionResponse>> job_{};
+    std::future<std::optional<RelayReply>> job_{};
     std::optional<DecisionRequest> active_{};
-    bool degraded_ = false;
+    Status status_ = Status::Local;
 };
 
 } // namespace foxgame

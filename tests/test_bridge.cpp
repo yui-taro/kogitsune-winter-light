@@ -30,5 +30,7 @@ int main(int argc, char** argv) {
     Check(game.State().guardian.intent == expected, "expected legal intent was not applied");
     Check(game.State().guardian.form == GuardianForm::Awakening, "departure did not begin");
     Check(bridge.Degraded() == (mode == "fallback"), "bridge health state is wrong");
+    Check(bridge.CurrentStatus() == (mode == "fallback" ? JevBridge::Status::Fallback : JevBridge::Status::Mock),
+          "relay source was not reflected in bridge status");
     std::cout << "bridge integration: pass\n";
 }

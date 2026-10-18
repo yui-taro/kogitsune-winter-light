@@ -11,14 +11,16 @@ const apiUrl = process.env.TYPESAFE_API_URL || 'https://api.typesafe.ai/v1/syste
 const model = process.env.JEV_MODEL || 'jev-1.13.0';
 const names = new Set([
   'guard_lantern', 'inspect_bell', 'inspect_tracks', 'inspect_last_seen',
-  'watch_exit', 'follow_visible_clue', 'wait_and_watch',
+  'watch_exit', 'watch_torii_exit', 'watch_log_exit', 'follow_visible_clue', 'wait_and_watch',
 ]);
 const descriptions = {
   guard_lantern: 'Remain at or return to the shrine lantern and guard it carefully.',
   inspect_bell: 'Go to the bell to find what made it ring, while remaining alert for other evidence.',
   inspect_tracks: 'Examine the most recently observed footprints and follow their visible direction.',
   inspect_last_seen: 'Investigate the place where the fox or lantern light was last actually seen.',
-  watch_exit: 'Watch a shrine exit without assuming which path an unseen fox took.',
+  watch_exit: 'Watch the forest fork leading toward the fox den after entering the forest.',
+  watch_torii_exit: 'Watch the torii exit on the west side of the shrine.',
+  watch_log_exit: 'Watch the fallen-log exit on the east side of the shrine.',
   follow_visible_clue: 'Approach a currently visible fox or carried light, with a warning before contact.',
   wait_and_watch: 'Stay still briefly and observe before choosing a route.',
 };
@@ -28,6 +30,7 @@ function validPoint(point) {
     Number.isFinite(point.x) && Number.isFinite(point.y) &&
     point.x >= 0 && point.x <= 1672 && point.y >= 0 && point.y <= 941;
 }
+function validAge(value) { return Number.isFinite(value) && value >= 0 && value <= 36000; }
 
 function normalize(input) {
   if (!input || !Number.isSafeInteger(input.attemptId) || input.attemptId < 1 ||
@@ -39,48 +42,72 @@ function normalize(input) {
       !input.legalIntents.every(name => names.has(name))) throw new Error('invalid decision');
   const k = input.knowledge;
   if (!k || typeof k !== 'object') throw new Error('invalid knowledge');
-  const keys = ['bellHeard', 'tracksSeen', 'foxVisible', 'theftKnown', 'falseAlarm',
+  const keys = ['bellHeard', 'tracksSeen', 'tracksPending', 'foxVisible', 'lightVisible', 'theftKnown', 'falseAlarm',
                 'hasLastSeen', 'lastSeenInForest', 'tracksSeenInForest'];
   if (!keys.every(key => typeof k[key] === 'boolean')) throw new Error('invalid knowledge flags');
   if (k.hasLastSeen && !validPoint(k.lastSeen)) throw new Error('invalid last seen');
   if (k.tracksSeen && !validPoint(k.lastTracks)) throw new Error('invalid tracks');
   if (k.bellHeard && !validPoint(k.bellPosition)) throw new Error('invalid bell');
+  if (!Number.isSafeInteger(k.bellCount) || k.bellCount < 0 || k.bellCount > 10000 ||
+      typeof k.watchCompleted !== 'boolean' ||
+      k.bellHeard !== (k.bellCount > 0) || (k.tracksPending && !k.tracksSeen) ||
+      (k.bellHeard && !validAge(k.bellAge)) ||
+      (k.tracksSeen && !validAge(k.tracksAge)) ||
+      (k.hasLastSeen && !validAge(k.lastSeenAge))) throw new Error('invalid clue history');
+  const guardian = input.guardian;
+  if (!guardian || !['shrine', 'forest'].includes(guardian.scene) ||
+      !['stone', 'awakening', 'animal', 'returning'].includes(guardian.form) ||
+      !names.has(guardian.currentIntent) || !validPoint(guardian.position))
+    throw new Error('invalid guardian');
   const legal = new Set(input.legalIntents);
-  if ((legal.has('follow_visible_clue') && !k.foxVisible) ||
+  if ((legal.has('follow_visible_clue') && !k.foxVisible && !k.lightVisible) ||
       (legal.has('inspect_last_seen') && !k.hasLastSeen) ||
-      (legal.has('inspect_tracks') && !k.tracksSeen) ||
-      (legal.has('inspect_bell') && !k.bellHeard) ||
-      (legal.has('watch_exit') && !k.theftKnown)) throw new Error('invalid legal intents');
+      (legal.has('inspect_tracks') && !k.tracksPending) ||
+      (legal.has('inspect_bell') && (!k.bellHeard || k.falseAlarm)) ||
+      (['watch_exit', 'watch_torii_exit', 'watch_log_exit'].some(name => legal.has(name)) && !k.theftKnown) ||
+      (legal.has('watch_exit') && guardian.scene !== 'forest') ||
+      ((legal.has('watch_torii_exit') || legal.has('watch_log_exit')) && guardian.scene !== 'shrine'))
+    throw new Error('invalid legal intents');
   // Construct the state afresh so arbitrary client fields never reach Jev.
   const observations = {
     bellHeard: k.bellHeard,
     tracksSeen: k.tracksSeen,
+    tracksPending: k.tracksPending,
     foxVisible: k.foxVisible,
+    lightVisible: k.lightVisible,
     theftKnown: k.theftKnown,
     previousBellInvestigationEmpty: k.falseAlarm,
+    bellCount: k.bellCount,
+    watchCompleted: k.watchCompleted,
     lastSeenArea: k.lastSeenInForest ? 'forest' : 'shrine',
     lastTracksArea: k.tracksSeenInForest ? 'forest' : 'shrine',
   };
-  if (k.hasLastSeen) observations.lastSeen = k.lastSeen;
-  if (k.tracksSeen) observations.lastTracks = k.lastTracks;
-  if (k.bellHeard) observations.bellPosition = k.bellPosition;
+  if (k.hasLastSeen) { observations.lastSeen = k.lastSeen; observations.lastSeenAge = k.lastSeenAge; }
+  if (k.tracksSeen) { observations.lastTracks = k.lastTracks; observations.tracksAge = k.tracksAge; }
+  if (k.bellHeard) { observations.bellPosition = k.bellPosition; observations.bellAge = k.bellAge; }
   return {
     attemptId: input.attemptId,
     decisionId: input.decisionId,
     revision: input.revision,
     legalIntents: input.legalIntents,
     observations,
+    guardian: {scene: guardian.scene, form: guardian.form,
+               currentIntent: guardian.currentIntent, position: guardian.position},
   };
 }
 
 function mockChoice(request) {
   const k = request.observations;
   const legal = new Set(request.legalIntents);
-  if (k.foxVisible && legal.has('follow_visible_clue')) return 'follow_visible_clue';
+  if ((k.foxVisible || k.lightVisible) && legal.has('follow_visible_clue')) return 'follow_visible_clue';
   if (k.theftKnown && k.lastSeen && legal.has('inspect_last_seen')) return 'inspect_last_seen';
-  if (k.tracksSeen && legal.has('inspect_tracks')) return 'inspect_tracks';
+  if (k.tracksPending && legal.has('inspect_tracks')) return 'inspect_tracks';
   if (k.bellHeard && !k.previousBellInvestigationEmpty && legal.has('inspect_bell')) return 'inspect_bell';
   if (k.theftKnown && legal.has('watch_exit')) return 'watch_exit';
+  if (k.theftKnown && legal.has('watch_torii_exit') && legal.has('watch_log_exit'))
+    return Math.hypot(request.guardian.position.x - 160, request.guardian.position.y - 735) <
+           Math.hypot(request.guardian.position.x - 1480, request.guardian.position.y - 345) ?
+           'watch_torii_exit' : 'watch_log_exit';
   return legal.has('guard_lantern') ? 'guard_lantern' : request.legalIntents[0];
 }
 
@@ -100,12 +127,13 @@ async function decide(request) {
         caution: 'After an empty investigation, become less eager to repeat the same lure.',
       },
       observed_facts: request.observations,
+      guardian_now: request.guardian,
     },
     model,
     questions: {
       guardian_intent: {
         type: 'choice',
-        instructions: 'Choose one legal action now that best fits this guardian\'s duty, curiosity, compassion, caution, and only its observed facts. Never assume an unseen fox position or know why the lantern is missing.',
+        instructions: 'Choose one legal action now that best fits this guardian\'s duty, curiosity, compassion, caution, current action, and recent observations. If the fox or carried lantern light is currently visible, follow_visible_clue takes priority; after losing sight, investigate the last observed place. Investigated footprints are memory, not a fresh clue; return to the shrine post when no active clue remains. A completed watch should lead to a new action. Use only observed facts. Never assume an unseen fox position or know why the lantern is missing.',
         criteria,
       },
     },
@@ -152,9 +180,17 @@ const server = http.createServer(async (req, res) => {
     const request = normalize(JSON.parse(text));
     const choice = await decide(request);
     send(res, 200, {attemptId: request.attemptId, decisionId: request.decisionId,
-                    revision: request.revision, choice});
+                    revision: request.revision, choice, mode: mock ? 'mock' : 'jev'});
   } catch (error) {
     const badInput = error instanceof SyntaxError || /^invalid|^request too large/.test(error.message);
+    if (!badInput) {
+      const upstreamStatus = /^Jev returned HTTP (\d{3})$/.exec(error.message)?.[1];
+      const reason = upstreamStatus ? `http_${upstreamStatus}` :
+        error.name === 'TimeoutError' ? 'timeout' :
+        error.message === 'Jev returned malformed JSON' ? 'malformed_response' :
+        error.message === 'Jev returned an illegal choice' ? 'illegal_choice' : 'connection_or_response_error';
+      process.stderr.write(`${JSON.stringify({event: 'jev_error', reason})}\n`);
+    }
     send(res, badInput ? 400 : 503, {error: badInput ? 'invalid request' : 'decision unavailable'});
   }
 });

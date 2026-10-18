@@ -1,5 +1,6 @@
 #include "World.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -10,6 +11,49 @@ using namespace foxgame;
 #define assert(expression) do { if (!(expression)) { \
     throw std::runtime_error(std::string("line ") + std::to_string(__LINE__) + ": " #expression); \
 } } while (false)
+
+void WalkTo(Game& game, Point target, int frames, bool crouch = false, bool run = false) {
+    Input input{};
+    input.toggleCrouch = game.State().fox.crouching != crouch;
+    input.toggleRun = !crouch && game.State().fox.running != run;
+    Stage original = game.State().stage;
+    for (int frame = 0; frame < frames; ++frame) {
+        Point from = game.State().fox.position;
+        float distance = Distance(from, target);
+        if (distance < 12.0f) break;
+        input.move = {(target.x - from.x) / distance, (target.y - from.y) / distance};
+        game.Update(input, 1.0f / 60.0f);
+        input.toggleCrouch = input.toggleRun = false;
+        if (game.State().stage == Stage::Captured) {
+            throw std::runtime_error("captured toward (" + std::to_string(target.x) + ", " +
+                                     std::to_string(target.y) + ")");
+        }
+        if (game.State().stage != original) return;
+    }
+    if (Distance(game.State().fox.position, target) >= 15.0f) {
+        Point current = game.State().fox.position;
+        throw std::runtime_error("blocked at (" + std::to_string(current.x) + ", " +
+                                 std::to_string(current.y) + ") toward (" +
+                                 std::to_string(target.x) + ", " + std::to_string(target.y) + ")");
+    }
+}
+
+void ShrineToLantern(Game& game) {
+    WalkTo(game, {400, 665}, 140);
+    WalkTo(game, {520, 595}, 140);
+    WalkTo(game, {650, 550}, 140);
+    WalkTo(game, {715, 535}, 80);
+    WalkTo(game, {760, 505}, 80);
+}
+
+void LanternToLog(Game& game) {
+    WalkTo(game, {650, 550}, 140, false, true);
+    WalkTo(game, {850, 555}, 180, false, true);
+    WalkTo(game, {1030, 520}, 180, false, true);
+    WalkTo(game, {1230, 470}, 180, false, true);
+    WalkTo(game, {1340, 430}, 140, true);
+    WalkTo(game, {1480, 345}, 180, true);
+}
 
 void ObservationBoundary() {
     Game game(StartMode::ShrinePractice);
@@ -84,27 +128,13 @@ void NewObservationSupersedesInFlight() {
 
 void PlayableRightRoute() {
     Game game(StartMode::ShrinePractice);
-    auto moveFor = [&](Point direction, float seconds, bool crouch, bool run) {
-        Input input{};
-        input.move = direction;
-        input.toggleCrouch = crouch;
-        input.toggleRun = run;
-        for (int frame = 0; frame < static_cast<int>(seconds * 60.0f); ++frame) {
-            game.Update(input, 1.0f / 60.0f);
-            input.toggleCrouch = input.toggleRun = false;
-            assert(game.State().stage != Stage::Captured);
-        }
-    };
-    moveFor({1, 0}, 3.55f, false, true);
-    moveFor({0, -1}, 3.75f, true, false);
-    moveFor({-1, 0}, 1.65f, false, true);
-    moveFor({-1, 1}, 0.45f, false, false);
+    game.SetExternalDecisionMode(true);
+    ShrineToLantern(game);
     Input take{};
     take.interact = true;
     game.Update(take, 1.0f / 60.0f);
     assert(game.State().lantern.owner == LanternOwner::Fox);
-    moveFor({1, 0}, 2.4f, false, false);
-    moveFor({0, -1}, 0.8f, true, false);
+    LanternToLog(game);
     assert(game.State().stage == Stage::SliceComplete);
 }
 
@@ -116,43 +146,46 @@ void FullStoryReachesEnding() {
     game.Update(touch, 1.0f / 60.0f);
     assert(game.State().nestTwigsTouched);
 
-    auto toward = [&](Point target, int frames, bool crouch = false, bool run = false) {
-        Input input{};
-        input.toggleCrouch = crouch;
-        input.toggleRun = run;
-        Stage original = game.State().stage;
-        for (int frame = 0; frame < frames; ++frame) {
-            Point from = game.State().fox.position;
-            float distance = Distance(from, target);
-            if (distance < 15.0f) break;
-            input.move = {(target.x - from.x) / distance, (target.y - from.y) / distance};
-            game.Update(input, 1.0f / 60.0f);
-            input.toggleCrouch = input.toggleRun = false;
-            assert(game.State().stage != Stage::Captured);
-            if (game.State().stage != original) break;
-        }
-    };
-
-    toward({280, 430}, 300, false, true);
+    WalkTo(game, {280, 430}, 300, false, true);
     assert(game.State().stage == Stage::ForestOutbound);
-    toward({530, 440}, 300);
+    WalkTo(game, {530, 440}, 300);
     assert(game.State().stage == Stage::Approach);
-    toward({1450, 745}, 360, false, true);
-    toward({1450, 345}, 300, true);
-    toward({940, 345}, 180, false, true);
-    toward({850, 450}, 60);
+    game.SetExternalDecisionMode(true);
+    ShrineToLantern(game);
     Input take{};
     take.interact = true;
     game.Update(take, 1.0f / 60.0f);
     assert(game.State().lantern.owner == LanternOwner::Fox);
-    toward({1400, 450}, 210);
-    toward({1480, 345}, 120, true);
+    LanternToLog(game);
     assert(game.State().stage == Stage::ForestReturn);
-    toward({1240, 470}, 180);
-    toward({270, 730}, 540, false, true);
+    WalkTo(game, {1240, 470}, 180, true);
+    for (int frame = 0; frame < 240 && !game.State().guardianEnteredForest; ++frame)
+        game.Update({}, 1.0f / 60.0f);
+    assert(game.State().guardianEnteredForest);
+    assert(game.State().knowledge.lightVisible);
+    WalkTo(game, {1030, 515}, 180);
+    WalkTo(game, {760, 555}, 180, false, true);
+    WalkTo(game, {445, 555}, 180, false, true);
+    WalkTo(game, {330, 665}, 100, false, true);
     assert(game.State().stage == Stage::NestEnding);
+    assert(!game.State().endingLanternPlaced);
+    assert(game.State().lantern.owner == LanternOwner::Fox);
+    assert(Distance(game.State().fox.position, {280, 430}) < 1.0f);
+    for (int frame = 0; frame < 960; ++frame) game.Update({}, 1.0f / 60.0f);
+    assert(game.State().stage == Stage::NestEnding);
+    assert(game.Sounds().fire == 0);
+    game.Update(take, 1.0f / 60.0f);
+    assert(!game.State().endingLanternPlaced);
+    WalkTo(game, {385, 475}, 100);
+    WalkTo(game, {545, 590}, 160);
+    WalkTo(game, {690, 650}, 130);
+    WalkTo(game, {790, 620}, 100);
+    game.Update(take, 1.0f / 60.0f);
+    assert(game.State().endingLanternPlaced);
+    assert(game.State().lantern.owner == LanternOwner::Ground);
     for (int frame = 0; frame < 960; ++frame) game.Update({}, 1.0f / 60.0f);
     assert(game.State().stage == Stage::Complete);
+    assert(game.Sounds().fire == 1);
 }
 
 void OffTrailMovementIsBlocked() {
@@ -181,9 +214,15 @@ void OffTrailMovementIsBlocked() {
 
     Game shrine(StartMode::ShrinePractice);
     shrine.SetExternalDecisionMode(true);
-    move.move = {0, -1};
+    move.move = {1, 0};
     for (int i = 0; i < 180; ++i) shrine.Update(move, 1.0f / 60.0f);
-    assert(shrine.State().fox.position.y > 420.0f); // The torii's wooded bank is solid.
+    assert(shrine.State().fox.position.x < 470.0f); // The lower snowfield is outside the stone road.
+
+    Game shrineBank(StartMode::ShrinePractice);
+    shrineBank.SetExternalDecisionMode(true);
+    move.move = {0, -1};
+    for (int i = 0; i < 180; ++i) shrineBank.Update(move, 1.0f / 60.0f);
+    assert(shrineBank.State().fox.position.y > 420.0f); // The torii's wooded bank is solid.
 }
 
 void FoxAnimationFollowsActualMovement() {
@@ -209,20 +248,8 @@ void FoxAnimationFollowsActualMovement() {
 
 void TheftRetryRestoresPreTheftWorld() {
     Game game(StartMode::ShrinePractice);
-    auto moveFor = [&](Point direction, float seconds, bool crouch = false, bool run = false) {
-        Input input{};
-        input.move = direction;
-        input.toggleCrouch = crouch;
-        input.toggleRun = run;
-        for (int frame = 0; frame < static_cast<int>(seconds * 60.0f); ++frame) {
-            game.Update(input, 1.0f / 60.0f);
-            input.toggleCrouch = input.toggleRun = false;
-        }
-    };
-    moveFor({1, 0}, 3.55f, false, true);
-    moveFor({0, -1}, 3.75f, true);
-    moveFor({-1, 0}, 1.65f, false, true);
-    moveFor({-1, 1}, 0.45f);
+    game.SetExternalDecisionMode(true);
+    ShrineToLantern(game);
     assert(game.HasCheckpointC());
     Input take{};
     take.interact = true;
@@ -250,9 +277,132 @@ void GuardianWalksAroundLowPassage() {
     for (int frame = 0; frame < 800; ++frame) {
         game.Update({}, 1.0f / 60.0f);
         Point p = game.State().guardian.position;
-        assert(!(p.x > 1350.0f && p.x < 1570.0f && p.y > 455.0f && p.y < 535.0f));
+        assert(!(p.x > 1350.0f && p.x < 1570.0f && p.y > 335.0f && p.y < 425.0f));
     }
     assert(Distance(game.State().guardian.position, clue) < 20.0f);
+}
+
+void GuardianFollowsCarriedLightOnRightRoad() {
+    Game game(StartMode::ShrinePractice);
+    game.SetExternalDecisionMode(true);
+    ShrineToLantern(game);
+    Input take{};
+    take.interact = true;
+    game.Update(take, 1.0f / 60.0f);
+    assert(game.State().lantern.owner == LanternOwner::Fox);
+    WalkTo(game, {650, 550}, 140);
+    WalkTo(game, {850, 555}, 180);
+    WalkTo(game, {1030, 520}, 180);
+    WalkTo(game, {1230, 470}, 180, false, true);
+    assert(game.State().guardian.form == GuardianForm::Stone);
+    assert(!game.State().knowledge.foxVisible);
+    assert(game.State().knowledge.lightVisible);
+    assert(Distance(game.State().knowledge.lastSeen, game.State().fox.position) < 1.0f);
+    auto request = game.TakePendingDecision();
+    assert(request);
+    assert(std::find(request->legalIntents.begin(), request->legalIntents.end(),
+                     Intent::FollowVisibleClue) != request->legalIntents.end());
+    assert(game.ApplyDecision({request->attemptId, request->decisionId, request->revision,
+                               Intent::FollowVisibleClue}));
+    for (int frame = 0; frame < 100; ++frame) game.Update({}, 1.0f / 60.0f);
+    assert(game.State().guardian.form == GuardianForm::Animal);
+    assert(game.State().guardian.position.x > 1030.0f);
+    Input hide{};
+    hide.toggleCrouch = true;
+    game.Update(hide, 1.0f / 60.0f);
+    assert(!game.State().knowledge.lightVisible);
+    auto lost = game.TakePendingDecision();
+    assert(lost);
+    assert(std::find(lost->legalIntents.begin(), lost->legalIntents.end(),
+                     Intent::FollowVisibleClue) == lost->legalIntents.end());
+}
+
+void CarriedLanternCanHideInBush() {
+    Game game(StartMode::ShrinePractice);
+    game.SetExternalDecisionMode(true);
+    ShrineToLantern(game);
+    WalkTo(game, {715, 500}, 80);
+    Input take{};
+    take.interact = true;
+    game.Update(take, 1.0f / 60.0f);
+    assert(game.State().lantern.owner == LanternOwner::Fox);
+    assert(game.State().knowledge.lightVisible);
+    auto sighting = game.TakePendingDecision();
+    assert(sighting);
+    assert(game.ApplyDecision({sighting->attemptId, sighting->decisionId, sighting->revision,
+                               Intent::FollowVisibleClue}));
+    assert(game.State().guardian.form == GuardianForm::Awakening);
+    WalkTo(game, {650, 520}, 80, true);
+    assert(game.FoxHidden());
+    assert(!game.State().knowledge.lightVisible);
+    assert(!game.State().knowledge.foxVisible);
+    auto hidden = game.TakePendingDecision();
+    assert(hidden);
+    assert(std::find(hidden->legalIntents.begin(), hidden->legalIntents.end(),
+                     Intent::FollowVisibleClue) == hidden->legalIntents.end());
+    assert(game.Notice().find("隠れた") != std::string::npos);
+    for (int frame = 0; frame < 240; ++frame) game.Update({}, 1.0f / 60.0f);
+    assert(game.State().stage != Stage::Captured);
+}
+
+void LocalGuardianStartsChasingVisibleLight() {
+    Game game(StartMode::ShrinePractice);
+    game.SetExternalDecisionMode(true);
+    ShrineToLantern(game);
+    game.SetExternalDecisionMode(false);
+    Input take{};
+    take.interact = true;
+    game.Update(take, 1.0f / 60.0f);
+    assert(game.State().lantern.owner == LanternOwner::Fox);
+    assert(game.State().knowledge.lightVisible);
+    assert(game.State().guardian.intent == Intent::FollowVisibleClue);
+    assert(game.State().guardian.form == GuardianForm::Awakening);
+}
+
+void LocalGuardianReturnsAfterInspectingTracks() {
+    Game game(StartMode::ShrinePractice);
+    Point post = game.State().guardian.post;
+    game.RecordObservation(ObservationKind::TracksSeen, {960, 470});
+    for (int frame = 0; frame < 180; ++frame) {
+        game.Update({}, 1.0f / 60.0f);
+        if (game.State().knowledge.tracksSeen && !game.State().knowledge.tracksPending &&
+            game.State().guardian.form == GuardianForm::Stone) break;
+    }
+    assert(game.State().knowledge.tracksSeen);
+    assert(!game.State().knowledge.tracksPending);
+    assert(game.State().guardian.form == GuardianForm::Stone);
+    assert(Distance(game.State().guardian.position, post) < 0.01f);
+}
+
+void TheftTriggersFiniteExitWatch() {
+    Game game(StartMode::ShrinePractice);
+    game.SetExternalDecisionMode(true);
+    Point post = game.State().guardian.post;
+    game.RecordObservation(ObservationKind::EmptyPedestalSeen, post);
+    auto request = game.TakePendingDecision();
+    assert(request);
+    assert(std::find(request->legalIntents.begin(), request->legalIntents.end(),
+                     Intent::GuardLantern) == request->legalIntents.end());
+    assert(std::find(request->legalIntents.begin(), request->legalIntents.end(),
+                     Intent::WatchLogExit) != request->legalIntents.end());
+    assert(game.ApplyDecision({request->attemptId, request->decisionId, request->revision,
+                               Intent::WatchLogExit}));
+    bool reachedExit = false;
+    for (int frame = 0; frame < 600 && !game.State().knowledge.watchCompleted; ++frame) {
+        game.Update({}, 1.0f / 60.0f);
+        reachedExit |= Distance(game.State().guardian.position, {1308.0f, 345.0f}) < 15.0f;
+    }
+    assert(reachedExit);
+    assert(game.State().knowledge.watchCompleted);
+    auto finished = game.TakePendingDecision();
+    assert(finished);
+    assert(std::find(finished->legalIntents.begin(), finished->legalIntents.end(),
+                     Intent::WatchLogExit) == finished->legalIntents.end());
+    assert(game.ApplyDecision({finished->attemptId, finished->decisionId, finished->revision,
+                               Intent::GuardLantern}));
+    for (int frame = 0; frame < 360; ++frame) game.Update({}, 1.0f / 60.0f);
+    assert(game.State().guardian.intent == Intent::GuardLantern);
+    assert(Distance(game.State().guardian.position, post) < 0.01f);
 }
 
 int main() {
@@ -266,5 +416,10 @@ int main() {
     FoxAnimationFollowsActualMovement();
     TheftRetryRestoresPreTheftWorld();
     GuardianWalksAroundLowPassage();
+    GuardianFollowsCarriedLightOnRightRoad();
+    CarriedLanternCanHideInBush();
+    LocalGuardianStartsChasingVisibleLight();
+    LocalGuardianReturnsAfterInspectingTracks();
+    TheftTriggersFiniteExitWatch();
     std::cout << "world invariants: pass\n";
 }
